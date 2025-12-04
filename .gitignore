@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Logs
+logs/
+
+# MacOS junk
+.DS_Store
+
+# Ollama models (never commit these!)
+*.bin
+*.gguf
