@@ -1,6 +1,7 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 
 # Virtual environment
 .venv/
@@ -11,6 +12,10 @@ logs/
 # MacOS junk
 .DS_Store
 
-# Ollama models (never commit these!)
+# Editors
+.vscode/
+.idea/
+
+# Ollama / model artifacts (do not commit model weights)
 *.bin
 *.gguf

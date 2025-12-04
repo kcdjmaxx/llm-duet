@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-duet"
+version = "0.1.0"
+description = "A small framework for multi-agent LLM conversations using local models via Ollama."
+authors = [
+  { name = "Max Ross", email = "example@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.32.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kcdjmaxx/llm-duet"
+Repository = "https://github.com/kcdjmaxx/llm-duet"
