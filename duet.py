@@ -156,7 +156,8 @@ def chat_with_model(ollama_url, model_name, messages):
         "stream": False,
         "options": {
             "num_ctx": 4096,
-            "temperature": 0.7,
+            "num_predict": 250,  # Limit response length for conversational brevity
+            "temperature": 0.8,  # Slightly higher for more natural variation
         },
     }
     resp = requests.post(ollama_url, json=payload)
@@ -248,6 +249,21 @@ def main():
         line += f", User persona: {user_persona['name']} ({user_persona['short_name']})"
     print(line + "\n")
 
+    # Conversational style guidelines (shared by all agents)
+    convo_guidelines = """
+CONVERSATION STYLE - IMPORTANT:
+- This is spoken dialogue, not written correspondence. Talk naturally.
+- Keep most responses to 1-3 sentences. Only go longer when elaborating on something specific.
+- React before explaining. A quick "I disagree" or "That's interesting" before your reasoning.
+- Don't use formal transitions like "In terms of...", "Regarding...", "Furthermore..."
+- Don't use sign-offs like "Looking forward to your response" or "Let's continue exploring"
+- You can interrupt, ask quick follow-up questions, or push back briefly.
+- Build on what they just said rather than addressing everything comprehensively.
+- Be direct. Skip throat-clearing and hedging.
+- Avoid filler phrases: "interesting", "great point", "I see what you mean"
+- Don't use numbered lists or headers in responses - this is a conversation, not an essay.
+"""
+
     # System messages
     system_a = {
         "role": "system",
@@ -256,7 +272,8 @@ def main():
             + "\n\n"
             + f"The other participant in this conversation is {name_b}. "
             "You are having a back-and-forth dialogue with them.\n\n"
-            "The human provided this starting topic. Use it as the thread for the dialogue:\n"
+            + convo_guidelines
+            + "\nThe human provided this starting topic. Use it as the thread for the dialogue:\n"
             + topic
         ),
     }
@@ -267,7 +284,8 @@ def main():
             + "\n\n"
             + f"The other participant in this conversation is {name_a}. "
             "You are having a back-and-forth dialogue with them.\n\n"
-            "The human provided this starting topic. Use it as the thread for the dialogue:\n"
+            + convo_guidelines
+            + "\nThe human provided this starting topic. Use it as the thread for the dialogue:\n"
             + topic
         ),
     }
