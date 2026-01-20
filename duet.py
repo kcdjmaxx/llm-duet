@@ -1,9 +1,12 @@
 import argparse
 import os
+import re
 import time
 from datetime import datetime
 
+import pygame
 import requests
+from PIL import Image, ImageDraw, ImageFont
 
 # Optional Anthropic support
 try:
@@ -129,6 +132,26 @@ def parse_args():
         help="Disable colored terminal output.",
     )
 
+    # Visual mode
+    parser.add_argument(
+        "--visual",
+        action="store_true",
+        help="Show live comic-style visualization of the conversation.",
+    )
+
+    parser.add_argument(
+        "--visual-image",
+        default="Artboard 1.png",
+        help="Base image with speech balloons for visual mode.",
+    )
+
+    parser.add_argument(
+        "--visual-pause",
+        type=float,
+        default=3.0,
+        help="Seconds to pause after each message in visual mode (default: 3).",
+    )
+
     return parser.parse_args()
 
 
@@ -145,6 +168,154 @@ def cwrap(text, color, use_color=True):
     if not use_color:
         return text
     return f"{color}{text}{Colors.RESET}"
+
+
+class ComicVisualizer:
+    """Live comic-style visualization of the conversation using pygame."""
+
+    # Scale factor for large images
+    SCALE = 0.5
+
+    # Balloon bounding boxes (x1, y1, x2, y2) - for SCALED image
+    # These are tuned for the 1920x1080 "Artboard 1.png" at 50% scale (960x540)
+    LEFT_BALLOON = (210, 50, 580, 150)   # Person 1 (man, upper balloon)
+    RIGHT_BALLOON = (310, 250, 670, 365)  # Person 2 (woman, lower balloon) - more left
+
+    def __init__(self, image_path):
+        self.image_path = image_path
+        original = Image.open(image_path)
+
+        # Scale down large images
+        new_width = int(original.width * self.SCALE)
+        new_height = int(original.height * self.SCALE)
+        self.base_image = original.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        self.width, self.height = self.base_image.size
+
+        # Try to load a nice font for Pillow text rendering
+        self.font = self._load_font(14)
+
+        # Text state
+        self.left_text = ""
+        self.right_text = ""
+
+        # Pygame state
+        self.screen = None
+        self._running = False
+
+    def _load_font(self, size):
+        """Try to load a good font, fall back to default."""
+        font_paths = [
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/SFNSText.ttf",
+            "/Library/Fonts/Arial.ttf",
+        ]
+        for path in font_paths:
+            try:
+                return ImageFont.truetype(path, size)
+            except (OSError, IOError):
+                continue
+        return ImageFont.load_default()
+
+    def _wrap_text(self, text, bbox, draw):
+        """Wrap text to fit within bounding box."""
+        x1, y1, x2, y2 = bbox
+        max_width = x2 - x1 - 10  # padding
+        max_height = y2 - y1 - 6
+
+        words = text.split()
+        lines = []
+        current_line = []
+
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox_test = draw.textbbox((0, 0), test_line, font=self.font)
+            if bbox_test[2] - bbox_test[0] <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+
+        if current_line:
+            lines.append(' '.join(current_line))
+
+        # Check if it fits vertically, truncate if needed
+        line_height = draw.textbbox((0, 0), "Ay", font=self.font)[3]
+        max_lines = max(1, int(max_height / line_height))
+
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            if lines:
+                lines[-1] = lines[-1][:max(0, len(lines[-1])-3)] + "..."
+
+        return '\n'.join(lines)
+
+    def _render(self):
+        """Render current text onto the image and return pygame surface."""
+        # Start with base image copy
+        img = self.base_image.copy()
+        draw = ImageDraw.Draw(img)
+
+        # Draw left balloon text
+        if self.left_text:
+            wrapped = self._wrap_text(self.left_text, self.LEFT_BALLOON, draw)
+            x1, y1, x2, y2 = self.LEFT_BALLOON
+            draw.text((x1 + 5, y1 + 3), wrapped, fill="black", font=self.font)
+
+        # Draw right balloon text
+        if self.right_text:
+            wrapped = self._wrap_text(self.right_text, self.RIGHT_BALLOON, draw)
+            x1, y1, x2, y2 = self.RIGHT_BALLOON
+            draw.text((x1 + 5, y1 + 3), wrapped, fill="black", font=self.font)
+
+        # Convert PIL image to pygame surface
+        img_bytes = img.tobytes()
+        return pygame.image.fromstring(img_bytes, img.size, img.mode)
+
+    def _update_display(self):
+        """Update the pygame display."""
+        if self.screen and self._running:
+            surface = self._render()
+            self.screen.blit(surface, (0, 0))
+            pygame.display.flip()
+
+    def start(self):
+        """Start the visualization window."""
+        pygame.init()
+        pygame.display.set_caption("Duet LLM - Live Conversation")
+        self.screen = pygame.display.set_mode((self.width, self.height))
+        self._running = True
+        self._update_display()
+
+    def _clean_text(self, text):
+        """Remove bracketed instructions and clean up text for display."""
+        # Remove [bracketed instructions] like [15 words max]
+        cleaned = re.sub(r'\[.*?\]', '', text)
+        # Clean up extra whitespace
+        cleaned = ' '.join(cleaned.split())
+        return cleaned.strip()
+
+    def update_left(self, text):
+        """Update left balloon (Person 1)."""
+        self.left_text = self._clean_text(text)
+        self._update_display()
+
+    def update_right(self, text):
+        """Update right balloon (Person 2)."""
+        self.right_text = self._clean_text(text)
+        self._update_display()
+
+    def process_events(self):
+        """Process pygame events (call periodically from main loop)."""
+        if self._running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self._running = False
+
+    def stop(self):
+        """Close the visualization window."""
+        self._running = False
+        pygame.quit()
 
 
 def load_persona(path):
@@ -283,6 +454,15 @@ def main():
 
     use_color = not args.no_color
 
+    # Visual mode setup
+    visualizer = None
+    if args.visual:
+        image_path = args.visual_image
+        if not os.path.exists(image_path):
+            print(f"Error: Visual image not found: {image_path}")
+            return
+        visualizer = ComicVisualizer(image_path)
+
     topic = input("Enter start topic (word or full prompt): ").strip()
     if not topic:
         print("No topic entered, exiting.")
@@ -406,6 +586,10 @@ GOOD: "Forget that. What about forgeries?"
 
     print("--- Conversation started (Ctrl-C to stop) ---\n")
 
+    # Start visual mode if enabled
+    if visualizer:
+        visualizer.start()
+
     turn = 0  # A↔B exchange counter
 
     try:
@@ -426,6 +610,12 @@ GOOD: "Forget that. What about forgeries?"
         print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply, "\n")
         append_log(log_path, name_a, a_reply)
 
+        # Update visual - A speaks first (left balloon)
+        if visualizer:
+            visualizer.update_left(a_reply)
+            visualizer.process_events()
+            time.sleep(args.visual_pause)
+
         # Brevity reminder injected each turn
         brevity_nudge = "\n\n[Remember: MAX 20 words. One thought. Stop.]"
 
@@ -442,6 +632,12 @@ GOOD: "Forget that. What about forgeries?"
             print(cwrap(f"[{short_b}]:", Colors.MAGENTA, use_color), b_reply, "\n")
             append_log(log_path, name_b, b_reply)
 
+            # Update visual - B speaks (right balloon)
+            if visualizer:
+                visualizer.update_right(b_reply)
+                visualizer.process_events()
+                time.sleep(args.visual_pause)
+
             # A responds to B
             conversation_a.append({"role": "user", "content": b_reply + brevity_nudge})
             a_reply = chat(
@@ -450,6 +646,12 @@ GOOD: "Forget that. What about forgeries?"
             )
             print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply, "\n")
             append_log(log_path, name_a, a_reply)
+
+            # Update visual - A speaks (left balloon)
+            if visualizer:
+                visualizer.update_left(a_reply)
+                visualizer.process_events()
+                time.sleep(args.visual_pause)
 
             # Judge interjection
             if (
@@ -518,6 +720,10 @@ GOOD: "Forget that. What about forgeries?"
 
     except KeyboardInterrupt:
         print("\n\nStopping conversation (Ctrl-C).")
+    finally:
+        # Clean up visualizer
+        if visualizer:
+            visualizer.stop()
 
     with open(log_path, "a", encoding="utf-8") as f:
         f.write("---\n\nConversation stopped.\n")

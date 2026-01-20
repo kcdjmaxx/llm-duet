@@ -1,21 +1,19 @@
+# Virtual environments
+.venv/
+venv/
+source/
+
 # Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 
-# Virtual environment
-.venv/
+# Environment files
+.env
 
-# Logs
-logs/
-
-# MacOS junk
+# OS files
 .DS_Store
 
-# Editors
-.vscode/
-.idea/
-
-# Ollama / model artifacts (do not commit model weights)
-*.bin
-*.gguf
+# Obsidian (if you want to exclude)
+# .obsidian/
+logs/
