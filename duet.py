@@ -15,6 +15,13 @@ try:
 except ImportError:
     HAS_ANTHROPIC = False
 
+# Optional ambient listening support
+try:
+    from listener import AmbientListener, check_dependencies as check_listener_deps
+    HAS_LISTENER = True
+except ImportError:
+    HAS_LISTENER = False
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -152,6 +159,26 @@ def parse_args():
         help="Seconds to pause after each message in visual mode (default: 3).",
     )
 
+    # Ambient listening mode
+    parser.add_argument(
+        "--listen",
+        action="store_true",
+        help="Enable ambient listening (microphone captures speech, influences conversation).",
+    )
+
+    parser.add_argument(
+        "--listen-interval",
+        type=int,
+        default=3,
+        help="Room whispers a topic every N turns when speech is detected (default: 3).",
+    )
+
+    parser.add_argument(
+        "--whisper-model",
+        default="base",
+        help="Whisper model size for speech recognition (tiny, base, small, medium, large).",
+    )
+
     return parser.parse_args()
 
 
@@ -161,6 +188,7 @@ class Colors:
     MAGENTA = "\033[95m"
     GREEN = "\033[92m"
     CYAN = "\033[96m"
+    YELLOW = "\033[93m"
     RESET = "\033[0m"
 
 
@@ -477,6 +505,28 @@ def main():
             return
         visualizer = ComicVisualizer(image_path)
 
+    # Ambient listening setup
+    listener = None
+    room_persona = None
+    if args.listen:
+        if not HAS_LISTENER:
+            print("Error: listener module not available.")
+            print("Make sure listener.py is in the same directory.")
+            return
+        if not check_listener_deps():
+            return
+
+        # Load room persona
+        room_persona_path = "personas/room.md"
+        if not os.path.exists(room_persona_path):
+            print(f"Error: Room persona not found: {room_persona_path}")
+            return
+        room_persona = load_persona(room_persona_path)
+
+        # Initialize listener
+        print(f"Initializing ambient listener (Whisper model: {args.whisper_model})...")
+        listener = AmbientListener(whisper_model=args.whisper_model)
+
     topic = input("Enter start topic (word or full prompt): ").strip()
     if not topic:
         print("No topic entered, exiting.")
@@ -595,13 +645,31 @@ GOOD: "Forget that. What about forgeries?"
         )
         conversation_u = [{"role": "system", "content": system_prompt_u}]
 
+    # Room persona conversation (for ambient listening)
+    conversation_r = None
+    system_prompt_r = None
+    if room_persona:
+        system_prompt_r = (
+            room_persona["text"]
+            + f"\n\nYou are whispering to {name_a} and {name_b}. "
+            "When given something you overheard, turn it into a brief whisper that might nudge their conversation. "
+            "Keep it to ONE sentence, max 15 words. Be subtle and poetic."
+        )
+        conversation_r = [{"role": "system", "content": system_prompt_r}]
+
     print("--- Conversation started (Ctrl-C to stop) ---\n")
 
     # Start visual mode if enabled
     if visualizer:
         visualizer.start()
 
+    # Start ambient listener if enabled
+    if listener:
+        listener.start()
+        print("Ambient listening active. Speak to influence the conversation.\n")
+
     turn = 0  # A↔B exchange counter
+    pending_topic = None  # Topic waiting to be injected
 
     try:
         # First move: A starts
@@ -725,6 +793,50 @@ GOOD: "Forget that. What about forgeries?"
                 )
                 append_log(log_path, user_persona["name"], u_reply)
 
+            # Ambient listening - check for new topics
+            if listener:
+                new_topic = listener.get_topic()
+                if new_topic:
+                    pending_topic = new_topic
+
+            # Room whisper - inject overheard topic
+            if (
+                room_persona
+                and pending_topic
+                and args.listen_interval > 0
+                and turn % args.listen_interval == 0
+            ):
+                prompt = (
+                    f"You overheard someone nearby say: \"{pending_topic}\"\n\n"
+                    "Turn this into a brief whisper (max 15 words) that might gently steer "
+                    f"{name_a} and {name_b}'s conversation toward this topic."
+                )
+                conversation_r.append({"role": "user", "content": prompt})
+                r_reply = chat(
+                    provider, ollama_url, args.model, args.anthropic_model,
+                    system_prompt_r, conversation_r
+                )
+                r_reply_clean = clean_response(r_reply)
+                print(
+                    cwrap(
+                        f"[{room_persona['short_name']}]:",
+                        Colors.YELLOW,
+                        use_color,
+                    ),
+                    r_reply_clean,
+                    "\n",
+                )
+                append_log(log_path, room_persona["name"], r_reply_clean)
+
+                # Inject the room's whisper into both agents' context
+                whisper_msg = f"(A whisper fills the room: {r_reply_clean})"
+                conversation_a.append({"role": "user", "content": whisper_msg})
+                conversation_a.append({"role": "assistant", "content": "(acknowledged)"})
+                conversation_b.append({"role": "user", "content": whisper_msg})
+                conversation_b.append({"role": "assistant", "content": "(acknowledged)"})
+
+                pending_topic = None  # Clear the pending topic
+
             # Stop if max_turns reached
             if args.max_turns > 0 and turn >= args.max_turns:
                 print("\nMax turns reached, stopping conversation.")
@@ -735,6 +847,10 @@ GOOD: "Forget that. What about forgeries?"
     except KeyboardInterrupt:
         print("\n\nStopping conversation (Ctrl-C).")
     finally:
+        # Clean up listener
+        if listener:
+            listener.stop()
+
         # Clean up visualizer
         if visualizer:
             visualizer.stop()
