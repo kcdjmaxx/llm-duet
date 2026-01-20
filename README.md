@@ -20,6 +20,7 @@ Duet LLM is a framework for running multi-agent conversations between LLMs. It s
 - **Optional user persona** - Your voice that jumps in periodically
 - **Markdown logging** - Full conversation saved to `logs/`
 - **Flexible CLI** - Control personas, models, intervals, max turns, and more
+- **Visual mode** - Live comic-style display with pygame for art installations
 
 ---
 
@@ -35,6 +36,10 @@ Duet LLM is a framework for running multi-agent conversations between LLMs. It s
 **For cloud models (Anthropic):**
 - Anthropic API key
 - `anthropic` Python package
+
+**For visual mode:**
+- pygame
+- Pillow (PIL)
 
 ---
 
@@ -222,6 +227,14 @@ python duet.py --help
 | `--user-persona` | Persona file representing you | None |
 | `--user-interval` | User persona interjects every N turns (0 = disabled) | `0` |
 
+### Visual Mode Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--visual` | Enable live comic-style visualization | `false` |
+| `--visual-image` | Base image with speech balloons | `Artboard 1.png` |
+| `--visual-pause` | Seconds to pause after each message | `3.0` |
+
 ### Other Options
 
 | Flag | Description | Default |
@@ -294,6 +307,19 @@ python duet.py \
   --logfile logs/debate.md
 ```
 
+### Visual Mode
+
+```bash
+# Basic visual mode (uses Artboard 1.png)
+python duet.py --provider anthropic --visual
+
+# Custom image and longer reading time
+python duet.py --provider anthropic --visual --visual-image myimage.png --visual-pause 5.0
+
+# Recommended: Jamie & Riley with visual mode (art installation ready)
+python duet.py --provider anthropic --visual --agentA personas/jamie.md --agentB personas/riley.md --visual-pause 6.0
+```
+
 ### Limit Conversation Length
 
 ```bash
@@ -317,10 +343,13 @@ python duet.py --max-turns 10
 duet_llm/
 ├── duet.py           # Main orchestrator
 ├── personaGen.py     # Interactive persona builder
+├── Artboard 1.png    # Default visual mode image (comic speech balloons)
 ├── personas/         # Persona markdown files
-│   ├── agent_a.md
-│   ├── agent_b.md
-│   ├── judge.md
+│   ├── agent_a.md    # Skeptical physicist (Dr. Lena Hart)
+│   ├── agent_b.md    # Mystic panpsychist (Mira Sol)
+│   ├── jamie.md      # Pragmatic optimist (casual)
+│   ├── riley.md      # Skeptical romantic (casual)
+│   ├── judge.md      # Neutral referee
 │   └── ...
 ├── logs/             # Conversation transcripts (auto-generated)
 ├── requirements.txt  # Python dependencies

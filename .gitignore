@@ -16,4 +16,13 @@ __pycache__/
 
 # Obsidian (if you want to exclude)
 # .obsidian/
+
+# Conversation logs
 logs/
+
+# Local Obsidian docs (not part of the project)
+Duet LLM Project MOC.md
+Persona Generator Prompt.md
+duet llm commands.md
+questionaire.md
+artists_statement.md

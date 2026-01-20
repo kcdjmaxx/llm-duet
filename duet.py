@@ -420,10 +420,24 @@ def create_log_file(topic, explicit_path=None):
     return path
 
 
+def clean_response(text):
+    """Remove bracketed meta-commentary and word counts from model output."""
+    # Remove [bracketed content] and (parenthetical meta-commentary)
+    cleaned = re.sub(r'\[.*?\]', '', text)
+    # Remove word count patterns like "1-word 2-word" or "word(1) word(2)"
+    cleaned = re.sub(r'\b\d+-\w+', '', cleaned)
+    cleaned = re.sub(r'\w+\(\d+\)', '', cleaned)
+    # Clean up extra whitespace
+    cleaned = ' '.join(cleaned.split())
+    return cleaned.strip()
+
+
 def append_log(log_path, speaker_name, text):
+    # Clean the text before logging
+    cleaned_text = clean_response(text)
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(f"### {speaker_name}\n\n")
-        for line in text.splitlines():
+        for line in cleaned_text.splitlines():
             f.write(f"> {line}\n")
         f.write("\n\n")
 
@@ -502,12 +516,12 @@ def main():
 
     # Conversational style guidelines (shared by all agents)
     convo_guidelines = """
-*** UNDER 20 WORDS. TALK LIKE YOU'RE TEXTING. ***
+*** KEEP IT SHORT. TALK LIKE YOU'RE TEXTING. ***
 
 You're friends debating over drinks. Fast, messy, casual.
 
 RULES:
-- MAX 20 WORDS. Count them.
+- Keep responses under 20 words.
 - Short punchy sentences. No clause-chaining.
 - No em-dashes to connect thoughts. No "and also" or "but also."
 - Talk like texting. Fragments OK.
@@ -515,16 +529,13 @@ RULES:
 - No meta-openers like "Here's my question" or "Let me be real" or "OK so." Just say it.
 
 BAD (meta-opener): "OK so here's my actual question: what's missing?"
-
 BAD (looping): Restating the same point about consciousness again.
 
 GOOD: "What's missing though?"
-
 GOOD: "That reminds me of something totally different actually."
-
 GOOD: "Forget that. What about forgeries?"
 
-*** MAX 20 WORDS. DON'T REPEAT YOURSELF. MEANDER. ***
+*** NEVER OUTPUT WORD COUNTS, BRACKETS, OR META-COMMENTARY. JUST SPEAK NATURALLY. ***
 """
 
     # System messages
@@ -607,17 +618,18 @@ GOOD: "Forget that. What about forgeries?"
             provider, ollama_url, model_a, anthropic_model_a,
             system_prompt_a, conversation_a
         )
-        print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply, "\n")
-        append_log(log_path, name_a, a_reply)
+        a_reply_clean = clean_response(a_reply)
+        print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply_clean, "\n")
+        append_log(log_path, name_a, a_reply_clean)
 
         # Update visual - A speaks first (left balloon)
         if visualizer:
-            visualizer.update_left(a_reply)
+            visualizer.update_left(a_reply_clean)
             visualizer.process_events()
             time.sleep(args.visual_pause)
 
-        # Brevity reminder injected each turn
-        brevity_nudge = "\n\n[Remember: MAX 20 words. One thought. Stop.]"
+        # Brevity reminder injected each turn (no brackets - model was echoing them)
+        brevity_nudge = "\n\n(Keep your reply short. One thought only.)"
 
         # Main loop
         while True:
@@ -629,12 +641,13 @@ GOOD: "Forget that. What about forgeries?"
                 provider, ollama_url, model_b, anthropic_model_b,
                 system_prompt_b, conversation_b
             )
-            print(cwrap(f"[{short_b}]:", Colors.MAGENTA, use_color), b_reply, "\n")
-            append_log(log_path, name_b, b_reply)
+            b_reply_clean = clean_response(b_reply)
+            print(cwrap(f"[{short_b}]:", Colors.MAGENTA, use_color), b_reply_clean, "\n")
+            append_log(log_path, name_b, b_reply_clean)
 
             # Update visual - B speaks (right balloon)
             if visualizer:
-                visualizer.update_right(b_reply)
+                visualizer.update_right(b_reply_clean)
                 visualizer.process_events()
                 time.sleep(args.visual_pause)
 
@@ -644,12 +657,13 @@ GOOD: "Forget that. What about forgeries?"
                 provider, ollama_url, model_a, anthropic_model_a,
                 system_prompt_a, conversation_a
             )
-            print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply, "\n")
-            append_log(log_path, name_a, a_reply)
+            a_reply_clean = clean_response(a_reply)
+            print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply_clean, "\n")
+            append_log(log_path, name_a, a_reply_clean)
 
             # Update visual - A speaks (left balloon)
             if visualizer:
-                visualizer.update_left(a_reply)
+                visualizer.update_left(a_reply_clean)
                 visualizer.process_events()
                 time.sleep(args.visual_pause)
 
@@ -660,8 +674,8 @@ GOOD: "Forget that. What about forgeries?"
                 and turn % args.judge_interval == 0
             ):
                 prompt = (
-                    f"{name_a} just said:\n{a_reply}\n\n"
-                    f"{name_b} just said:\n{b_reply}\n\n"
+                    f"{name_a} just said:\n{a_reply_clean}\n\n"
+                    f"{name_b} just said:\n{b_reply_clean}\n\n"
                     "As the judge, briefly evaluate the last exchange. "
                     "Highlight any strong points, weak points, misconceptions, "
                     "and suggest how the dialogue could go deeper or clearer next."
@@ -689,8 +703,8 @@ GOOD: "Forget that. What about forgeries?"
                 and turn % args.user_interval == 0
             ):
                 prompt = (
-                    f"{name_a} just said:\n{a_reply}\n\n"
-                    f"{name_b} just said:\n{b_reply}\n\n"
+                    f"{name_a} just said:\n{a_reply_clean}\n\n"
+                    f"{name_b} just said:\n{b_reply_clean}\n\n"
                     "As the user persona, step into the conversation with a short comment or question "
                     "that pushes both agents toward more insight, rigor, or practicality. "
                     "You are allowed to disagree, redirect, or connect to a bigger picture."
