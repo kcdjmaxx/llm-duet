@@ -5,6 +5,13 @@ from datetime import datetime
 
 import requests
 
+# Optional Anthropic support
+try:
+    import anthropic
+    HAS_ANTHROPIC = True
+except ImportError:
+    HAS_ANTHROPIC = False
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -45,6 +52,31 @@ def parse_args():
         "-MB",
         "--modelB",
         help="Optional: specific model for Agent B (overrides --model).",
+    )
+
+    # Provider selection
+    parser.add_argument(
+        "--provider",
+        choices=["ollama", "anthropic"],
+        default="ollama",
+        help="LLM provider to use.",
+    )
+
+    # Anthropic model options
+    parser.add_argument(
+        "--anthropic-model",
+        default="claude-haiku-4-5-20251001",
+        help="Default Anthropic model for both agents.",
+    )
+
+    parser.add_argument(
+        "--anthropic-model-a",
+        help="Optional: specific Anthropic model for Agent A.",
+    )
+
+    parser.add_argument(
+        "--anthropic-model-b",
+        help="Optional: specific Anthropic model for Agent B.",
     )
 
     # Judge / referee
@@ -149,7 +181,8 @@ def load_persona(path):
     }
 
 
-def chat_with_model(ollama_url, model_name, messages):
+def chat_with_ollama(ollama_url, model_name, messages):
+    """Send chat request to Ollama."""
     payload = {
         "model": model_name,
         "messages": messages,
@@ -164,6 +197,32 @@ def chat_with_model(ollama_url, model_name, messages):
     resp.raise_for_status()
     data = resp.json()
     return data["message"]["content"]
+
+
+def chat_with_claude(model_name, system_prompt, messages, max_tokens=50):
+    """Send chat request to Anthropic Claude API."""
+    client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY env var
+    response = client.messages.create(
+        model=model_name,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=messages,
+    )
+    return response.content[0].text
+
+
+def chat(provider, ollama_url, ollama_model, anthropic_model, system_prompt, messages):
+    """Provider-agnostic chat wrapper."""
+    if provider == "anthropic":
+        if not HAS_ANTHROPIC:
+            raise RuntimeError(
+                "anthropic package not installed. Run: pip install anthropic"
+            )
+        # Claude takes system separately; filter it out of messages
+        user_assistant_msgs = [m for m in messages if m["role"] != "system"]
+        return chat_with_claude(anthropic_model, system_prompt, user_assistant_msgs)
+    else:
+        return chat_with_ollama(ollama_url, ollama_model, messages)
 
 
 def create_log_file(topic, explicit_path=None):
@@ -201,14 +260,26 @@ def append_log(log_path, speaker_name, text):
 def main():
     args = parse_args()
 
+    # Validate provider
+    provider = args.provider
+    if provider == "anthropic" and not HAS_ANTHROPIC:
+        print("Error: anthropic package not installed. Run: pip install anthropic")
+        return
+
     # Ollama base URL
     ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/chat")
 
-    # Figure out models
+    # Figure out Ollama models
     model_a = args.modelA or args.model
     model_b = args.modelB or args.model
     model_judge = args.judge_model or args.model
     model_user = args.model  # could be separated later
+
+    # Figure out Anthropic models
+    anthropic_model_a = args.anthropic_model_a or args.anthropic_model
+    anthropic_model_b = args.anthropic_model_b or args.anthropic_model
+    anthropic_model_judge = args.anthropic_model
+    anthropic_model_user = args.anthropic_model
 
     use_color = not args.no_color
 
@@ -251,17 +322,29 @@ def main():
 
     # Conversational style guidelines (shared by all agents)
     convo_guidelines = """
-CONVERSATION STYLE - IMPORTANT:
-- This is spoken dialogue, not written correspondence. Talk naturally.
-- Keep most responses to 1-3 sentences. Only go longer when elaborating on something specific.
-- React before explaining. A quick "I disagree" or "That's interesting" before your reasoning.
-- Don't use formal transitions like "In terms of...", "Regarding...", "Furthermore..."
-- Don't use sign-offs like "Looking forward to your response" or "Let's continue exploring"
-- You can interrupt, ask quick follow-up questions, or push back briefly.
-- Build on what they just said rather than addressing everything comprehensively.
-- Be direct. Skip throat-clearing and hedging.
-- Avoid filler phrases: "interesting", "great point", "I see what you mean"
-- Don't use numbered lists or headers in responses - this is a conversation, not an essay.
+*** UNDER 20 WORDS. TALK LIKE YOU'RE TEXTING. ***
+
+You're friends debating over drinks. Fast, messy, casual.
+
+RULES:
+- MAX 20 WORDS. Count them.
+- Short punchy sentences. No clause-chaining.
+- No em-dashes to connect thoughts. No "and also" or "but also."
+- Talk like texting. Fragments OK.
+- MEANDER. Go on tangents. Bring up random related things. Don't stay on one point.
+- No meta-openers like "Here's my question" or "Let me be real" or "OK so." Just say it.
+
+BAD (meta-opener): "OK so here's my actual question: what's missing?"
+
+BAD (looping): Restating the same point about consciousness again.
+
+GOOD: "What's missing though?"
+
+GOOD: "That reminds me of something totally different actually."
+
+GOOD: "Forget that. What about forgeries?"
+
+*** MAX 20 WORDS. DON'T REPEAT YOURSELF. MEANDER. ***
 """
 
     # System messages
@@ -290,34 +373,36 @@ CONVERSATION STYLE - IMPORTANT:
         ),
     }
 
+    # Store system prompts as strings (for Anthropic) and as message lists (for Ollama)
+    system_prompt_a = system_a["content"]
+    system_prompt_b = system_b["content"]
+
     conversation_a = [system_a]
     conversation_b = [system_b]
 
     # Judge conversation (if any)
     conversation_j = None
+    system_prompt_j = None
     if judge_persona:
-        conversation_j = [
-            {
-                "role": "system",
-                "content": judge_persona["text"]
-                + "\n\nYou are a neutral judge/referee analyzing the dialogue "
-                f"between {name_a} and {name_b}. You comment only when asked, "
-                "and you focus on clarity, rigor, and synthesis.",
-            }
-        ]
+        system_prompt_j = (
+            judge_persona["text"]
+            + "\n\nYou are a neutral judge/referee analyzing the dialogue "
+            f"between {name_a} and {name_b}. You comment only when asked, "
+            "and you focus on clarity, rigor, and synthesis."
+        )
+        conversation_j = [{"role": "system", "content": system_prompt_j}]
 
     # User persona conversation (if any)
     conversation_u = None
+    system_prompt_u = None
     if user_persona:
-        conversation_u = [
-            {
-                "role": "system",
-                "content": user_persona["text"]
-                + "\n\nYou are a third voice occasionally stepping into the dialogue. "
-                "You represent the human who started the topic, asking sharp questions, "
-                "connecting ideas, or redirecting when helpful.",
-            }
-        ]
+        system_prompt_u = (
+            user_persona["text"]
+            + "\n\nYou are a third voice occasionally stepping into the dialogue. "
+            "You represent the human who started the topic, asking sharp questions, "
+            "connecting ideas, or redirecting when helpful."
+        )
+        conversation_u = [{"role": "system", "content": system_prompt_u}]
 
     print("--- Conversation started (Ctrl-C to stop) ---\n")
 
@@ -334,23 +419,35 @@ CONVERSATION STYLE - IMPORTANT:
                 ),
             }
         )
-        a_reply = chat_with_model(ollama_url, model_a, conversation_a)
+        a_reply = chat(
+            provider, ollama_url, model_a, anthropic_model_a,
+            system_prompt_a, conversation_a
+        )
         print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply, "\n")
         append_log(log_path, name_a, a_reply)
+
+        # Brevity reminder injected each turn
+        brevity_nudge = "\n\n[Remember: MAX 20 words. One thought. Stop.]"
 
         # Main loop
         while True:
             turn += 1
 
             # B responds to A
-            conversation_b.append({"role": "user", "content": a_reply})
-            b_reply = chat_with_model(ollama_url, model_b, conversation_b)
+            conversation_b.append({"role": "user", "content": a_reply + brevity_nudge})
+            b_reply = chat(
+                provider, ollama_url, model_b, anthropic_model_b,
+                system_prompt_b, conversation_b
+            )
             print(cwrap(f"[{short_b}]:", Colors.MAGENTA, use_color), b_reply, "\n")
             append_log(log_path, name_b, b_reply)
 
             # A responds to B
-            conversation_a.append({"role": "user", "content": b_reply})
-            a_reply = chat_with_model(ollama_url, model_a, conversation_a)
+            conversation_a.append({"role": "user", "content": b_reply + brevity_nudge})
+            a_reply = chat(
+                provider, ollama_url, model_a, anthropic_model_a,
+                system_prompt_a, conversation_a
+            )
             print(cwrap(f"[{short_a}]:", Colors.BLUE, use_color), a_reply, "\n")
             append_log(log_path, name_a, a_reply)
 
@@ -368,7 +465,10 @@ CONVERSATION STYLE - IMPORTANT:
                     "and suggest how the dialogue could go deeper or clearer next."
                 )
                 conversation_j.append({"role": "user", "content": prompt})
-                j_reply = chat_with_model(ollama_url, model_judge, conversation_j)
+                j_reply = chat(
+                    provider, ollama_url, model_judge, anthropic_model_judge,
+                    system_prompt_j, conversation_j
+                )
                 print(
                     cwrap(
                         f"[{judge_persona['short_name']}]:",
@@ -394,7 +494,10 @@ CONVERSATION STYLE - IMPORTANT:
                     "You are allowed to disagree, redirect, or connect to a bigger picture."
                 )
                 conversation_u.append({"role": "user", "content": prompt})
-                u_reply = chat_with_model(ollama_url, model_user, conversation_u)
+                u_reply = chat(
+                    provider, ollama_url, model_user, anthropic_model_user,
+                    system_prompt_u, conversation_u
+                )
                 print(
                     cwrap(
                         f"[{user_persona['short_name']}]:",
