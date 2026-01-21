@@ -179,6 +179,13 @@ def parse_args():
         help="Whisper model size for speech recognition (tiny, base, small, medium, large).",
     )
 
+    parser.add_argument(
+        "--topic-hold-turns",
+        type=int,
+        default=5,
+        help="How many turns to keep reinforcing a topic before moving to the next (default: 5).",
+    )
+
     return parser.parse_args()
 
 
@@ -220,7 +227,7 @@ class ComicVisualizer:
         self.width, self.height = self.base_image.size
 
         # Try to load a nice font for Pillow text rendering
-        self.font = self._load_font(14)
+        self.font = self._load_font(22)
 
         # Text state
         self.left_text = ""
@@ -233,6 +240,7 @@ class ComicVisualizer:
     def _load_font(self, size):
         """Try to load a good font, fall back to default."""
         font_paths = [
+            "/System/Library/Fonts/MarkerFelt.ttc",
             "/System/Library/Fonts/Helvetica.ttc",
             "/System/Library/Fonts/SFNSText.ttf",
             "/Library/Fonts/Arial.ttf",
@@ -669,7 +677,14 @@ GOOD: "Forget that. What about forgeries?"
         print("Ambient listening active. Speak to influence the conversation.\n")
 
     turn = 0  # A↔B exchange counter
-    pending_topic = None  # Topic waiting to be injected
+    pending_topic = None  # Raw topic from listener waiting to become a whisper
+    pending_whisper = None  # Whisper to inject into next exchange
+
+    # Topic persistence - keep a topic alive for multiple turns
+    active_room_topic = None  # Current topic being woven into conversation
+    room_topic_turns_left = 0  # How many more turns to keep this topic active
+    topic_hold_turns = args.topic_hold_turns  # How many turns to hold each topic
+    topic_queue = []  # Queue of topics waiting to be introduced
 
     try:
         # First move: A starts
@@ -703,8 +718,18 @@ GOOD: "Forget that. What about forgeries?"
         while True:
             turn += 1
 
-            # B responds to A
-            conversation_b.append({"role": "user", "content": a_reply + brevity_nudge})
+            # B responds to A (include whisper if pending)
+            b_input = a_reply + brevity_nudge
+            if pending_whisper:
+                # Check if this is first introduction or reinforcement
+                if room_topic_turns_left == topic_hold_turns:
+                    # First introduction - be forceful
+                    b_input += f"\n\n[IMPORTANT: Someone nearby just said \"{pending_whisper}\" — acknowledge this and shift your conversation toward it. Don't ignore it.]"
+                else:
+                    # Reinforcement - subtler nudge
+                    b_input += f"\n\n[Keep weaving in the topic of \"{pending_whisper}\" — stay with it for now.]"
+                pending_whisper = None
+            conversation_b.append({"role": "user", "content": b_input})
             b_reply = chat(
                 provider, ollama_url, model_b, anthropic_model_b,
                 system_prompt_b, conversation_b
@@ -793,49 +818,60 @@ GOOD: "Forget that. What about forgeries?"
                 )
                 append_log(log_path, user_persona["name"], u_reply)
 
-            # Ambient listening - check for new topics
+            # Ambient listening - queue new topics
             if listener:
                 new_topic = listener.get_topic()
                 if new_topic:
-                    pending_topic = new_topic
+                    topic_queue.append(new_topic)
+                    print(cwrap(f"[Queued]:", Colors.YELLOW, use_color), f"'{new_topic}' ({len(topic_queue)} in queue)\n")
 
-            # Room whisper - inject overheard topic
+            # Decrement active topic counter
+            if room_topic_turns_left > 0:
+                room_topic_turns_left -= 1
+
+            # Room whisper - introduce new topic or reinforce current one
             if (
                 room_persona
-                and pending_topic
                 and args.listen_interval > 0
                 and turn % args.listen_interval == 0
             ):
-                prompt = (
-                    f"You overheard someone nearby say: \"{pending_topic}\"\n\n"
-                    "Turn this into a brief whisper (max 15 words) that might gently steer "
-                    f"{name_a} and {name_b}'s conversation toward this topic."
-                )
-                conversation_r.append({"role": "user", "content": prompt})
-                r_reply = chat(
-                    provider, ollama_url, args.model, args.anthropic_model,
-                    system_prompt_r, conversation_r
-                )
-                r_reply_clean = clean_response(r_reply)
-                print(
-                    cwrap(
-                        f"[{room_persona['short_name']}]:",
-                        Colors.YELLOW,
-                        use_color,
-                    ),
-                    r_reply_clean,
-                    "\n",
-                )
-                append_log(log_path, room_persona["name"], r_reply_clean)
+                # If no active topic and queue has items, introduce new topic
+                if room_topic_turns_left == 0 and topic_queue:
+                    pending_topic = topic_queue.pop(0)
 
-                # Inject the room's whisper into both agents' context
-                whisper_msg = f"(A whisper fills the room: {r_reply_clean})"
-                conversation_a.append({"role": "user", "content": whisper_msg})
-                conversation_a.append({"role": "assistant", "content": "(acknowledged)"})
-                conversation_b.append({"role": "user", "content": whisper_msg})
-                conversation_b.append({"role": "assistant", "content": "(acknowledged)"})
+                    prompt = (
+                        f"You overheard: \"{pending_topic}\"\n\n"
+                        "Output ONE short sentence (under 10 words). No formatting. Just the whisper."
+                    )
+                    conversation_r.append({"role": "user", "content": prompt})
+                    r_reply = chat(
+                        provider, ollama_url, args.model, args.anthropic_model,
+                        system_prompt_r, conversation_r
+                    )
+                    r_reply_clean = clean_response(r_reply)
+                    # Extra cleanup - strip markdown formatting the model might add
+                    r_reply_clean = r_reply_clean.lstrip('#*-123456789. ')
+                    r_reply_clean = r_reply_clean.replace('**', '').replace('*', '')
 
-                pending_topic = None  # Clear the pending topic
+                    print(
+                        cwrap(
+                            f"[{room_persona['short_name']}]:",
+                            Colors.YELLOW,
+                            use_color,
+                        ),
+                        r_reply_clean,
+                        "\n",
+                    )
+                    append_log(log_path, room_persona["name"], r_reply_clean)
+
+                    # Set as active topic and store whisper for injection
+                    active_room_topic = r_reply_clean
+                    room_topic_turns_left = topic_hold_turns
+                    pending_whisper = r_reply_clean
+
+                # If active topic still has turns left, reinforce it (subtler)
+                elif active_room_topic and room_topic_turns_left > 0:
+                    pending_whisper = active_room_topic  # Keep nudging with same topic
 
             # Stop if max_turns reached
             if args.max_turns > 0 and turn >= args.max_turns:
