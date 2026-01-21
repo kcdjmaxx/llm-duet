@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Duet LLM is a multi-agent conversation framework that runs LLMs against each other. Supports both local models via Ollama and cloud models via Anthropic API. Two personas debate a topic autonomously with optional judge and user persona interjections. Includes a visual mode for art installations that displays conversations in comic-style speech balloons.
+Duet LLM is a multi-agent conversation framework that runs LLMs against each other. Supports both local models via Ollama and cloud models via Anthropic API. Two personas debate a topic autonomously with optional judge and user persona interjections. Includes a visual mode for art installations that displays conversations in comic-style speech balloons. Ambient listening mode captures microphone input and uses Whisper to transcribe speech, allowing the conversation to shift based on what visitors say in the room.
 
 ## Prerequisites
 
@@ -12,6 +12,7 @@ Duet LLM is a multi-agent conversation framework that runs LLMs against each oth
 - For Ollama: Ollama installed and running, at least one model pulled (e.g., `ollama pull mistral`)
 - For Anthropic: `ANTHROPIC_API_KEY` environment variable set
 - For visual mode: pygame and Pillow (included in requirements.txt)
+- For ambient listening: sounddevice, faster-whisper, numpy + microphone permissions
 
 ## Setup
 
@@ -36,8 +37,8 @@ python duet.py --provider anthropic --visual
 # Casual personas (Jamie & Riley)
 python duet.py -A personas/jamie.md -B personas/riley.md --provider anthropic
 
-# Different models per agent
-python duet.py -MA mistral -MB qwen2.5:7b
+# Ambient listening (art installation mode)
+python duet.py --provider anthropic --visual --listen --agentA personas/jamie.md --agentB personas/riley.md --visual-pause 6.0
 
 # With judge interjecting every 4 turns
 python duet.py --judge-persona personas/judge.md --judge-interval 4
@@ -60,10 +61,17 @@ python personaGen.py
 **duet.py** - Main orchestrator
 - Parses CLI args for personas, models, providers, intervals
 - Loads persona markdown files and extracts `Name:` / `ShortName:` headers
-- Maintains separate conversation histories for each agent (A, B, judge, user)
+- Maintains separate conversation histories for each agent (A, B, judge, user, room)
 - Provider-agnostic chat wrapper supports Ollama and Anthropic
 - Visual mode uses pygame to display comic-style speech balloons
+- Ambient listening integrates with listener.py to capture and inject topics
 - Logs full conversation to markdown in `logs/`
+
+**listener.py** - Ambient listening module
+- Captures audio from microphone using sounddevice
+- Voice Activity Detection (VAD) filters silence
+- Transcribes speech using faster-whisper (local Whisper)
+- Queues topics for injection into conversation
 
 **personaGen.py** - Interactive persona builder
 - Prompts for worldview, traits, gears, role, quirks, mission

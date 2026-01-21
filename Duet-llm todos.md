@@ -16,10 +16,11 @@ tags:
 - [x] Conversational style tuning (brevity, casual tone, no essay-speak)
 - [x] New casual personas: Jamie (pragmatic optimist) & Riley (skeptical romantic)
 - [x] Response filtering (removes bracketed meta-commentary from output)
-
-## In Progress
-
-- [ ] Add microphone input to capture ambient speech (for art installation)
+- [x] Ambient listening with Whisper (microphone captures speech, influences conversation)
+- [x] Topic persistence (topics hold for N turns with reinforcement nudges)
+- [x] Topic queue (new topics queue up instead of replacing immediately)
+- [x] Room persona (whispering room that relays overheard topics)
+- [x] MarkerFelt comic font for visual mode
 
 ## Future Ideas
 

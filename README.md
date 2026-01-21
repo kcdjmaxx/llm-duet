@@ -21,6 +21,7 @@ Duet LLM is a framework for running multi-agent conversations between LLMs. It s
 - **Markdown logging** - Full conversation saved to `logs/`
 - **Flexible CLI** - Control personas, models, intervals, max turns, and more
 - **Visual mode** - Live comic-style display with pygame for art installations
+- **Ambient listening** - Microphone captures speech, influencing the conversation (art installation feature)
 
 ---
 
@@ -40,6 +41,12 @@ Duet LLM is a framework for running multi-agent conversations between LLMs. It s
 **For visual mode:**
 - pygame
 - Pillow (PIL)
+
+**For ambient listening (--listen):**
+- sounddevice
+- faster-whisper
+- numpy
+- Microphone permissions granted to Terminal
 
 ---
 
@@ -235,6 +242,15 @@ python duet.py --help
 | `--visual-image` | Base image with speech balloons | `Artboard 1.png` |
 | `--visual-pause` | Seconds to pause after each message | `3.0` |
 
+### Ambient Listening Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--listen` | Enable ambient listening (microphone input) | `false` |
+| `--listen-interval` | Room whispers every N turns | `3` |
+| `--whisper-model` | Whisper model size (tiny/base/small/medium/large) | `base` |
+| `--topic-hold-turns` | How many turns to keep reinforcing a topic | `5` |
+
 ### Other Options
 
 | Flag | Description | Default |
@@ -320,6 +336,26 @@ python duet.py --provider anthropic --visual --visual-image myimage.png --visual
 python duet.py --provider anthropic --visual --agentA personas/jamie.md --agentB personas/riley.md --visual-pause 6.0
 ```
 
+### Ambient Listening (Art Installation)
+
+```bash
+# Enable microphone listening - conversation shifts based on what visitors say
+python duet.py --provider anthropic --visual --listen --agentA personas/jamie.md --agentB personas/riley.md --visual-pause 6.0
+
+# Longer topic persistence (8 turns instead of 5)
+python duet.py --provider anthropic --visual --listen --topic-hold-turns 8
+
+# Faster Whisper model for quicker transcription
+python duet.py --provider anthropic --listen --whisper-model small
+```
+
+**How it works:**
+1. Microphone captures ambient speech
+2. Whisper transcribes speech to text
+3. Topics queue up and are introduced by "The Room" persona
+4. Topics persist for N turns, with reinforcement nudges
+5. After N turns, the next queued topic is introduced
+
 ### Limit Conversation Length
 
 ```bash
@@ -342,6 +378,7 @@ python duet.py --max-turns 10
 ```
 duet_llm/
 ├── duet.py           # Main orchestrator
+├── listener.py       # Ambient listening module (mic + Whisper)
 ├── personaGen.py     # Interactive persona builder
 ├── Artboard 1.png    # Default visual mode image (comic speech balloons)
 ├── personas/         # Persona markdown files
@@ -349,6 +386,7 @@ duet_llm/
 │   ├── agent_b.md    # Mystic panpsychist (Mira Sol)
 │   ├── jamie.md      # Pragmatic optimist (casual)
 │   ├── riley.md      # Skeptical romantic (casual)
+│   ├── room.md       # The whispering room (ambient listening)
 │   ├── judge.md      # Neutral referee
 │   └── ...
 ├── logs/             # Conversation transcripts (auto-generated)
