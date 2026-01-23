@@ -159,6 +159,12 @@ def parse_args():
         help="Seconds to pause after each message in visual mode (default: 3).",
     )
 
+    parser.add_argument(
+        "--visual-both",
+        action="store_true",
+        help="Show both speech balloons simultaneously (default: show one at a time).",
+    )
+
     # Ambient listening mode
     parser.add_argument(
         "--listen",
@@ -221,8 +227,9 @@ class ComicVisualizer:
     LEFT_BALLOON = (210, 50, 580, 150)   # Person 1 (man, upper balloon)
     RIGHT_BALLOON = (310, 250, 670, 365)  # Person 2 (woman, lower balloon) - more left
 
-    def __init__(self, image_path):
+    def __init__(self, image_path, show_both=False):
         self.image_path = image_path
+        self.show_both = show_both  # Whether to show both balloons simultaneously
         original = Image.open(image_path)
 
         # Scale down large images
@@ -339,11 +346,15 @@ class ComicVisualizer:
     def update_left(self, text):
         """Update left balloon (Person 1)."""
         self.left_text = self._clean_text(text)
+        if not self.show_both:
+            self.right_text = ""  # Clear the other balloon (default behavior)
         self._update_display()
 
     def update_right(self, text):
         """Update right balloon (Person 2)."""
         self.right_text = self._clean_text(text)
+        if not self.show_both:
+            self.left_text = ""  # Clear the other balloon (default behavior)
         self._update_display()
 
     def process_events(self):
@@ -561,7 +572,7 @@ def main():
         if not os.path.exists(image_path):
             print(f"Error: Visual image not found: {image_path}")
             return
-        visualizer = ComicVisualizer(image_path)
+        visualizer = ComicVisualizer(image_path, show_both=args.visual_both)
 
     # Icebreakers setup
     icebreaker_data = None
