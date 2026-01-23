@@ -936,6 +936,10 @@ GOOD: "Forget that. What about forgeries?"
                 if room_topic_turns_left == 0 and topic_queue:
                     pending_topic = topic_queue.pop(0)
 
+                    # Clear Room's conversation history to keep whispers focused on one topic
+                    # This prevents the Room from accumulating and dumping multiple topics
+                    conversation_r = [{"role": "system", "content": system_prompt_r}]
+
                     prompt = (
                         f"You overheard: \"{pending_topic}\"\n\n"
                         "Output ONE short sentence (under 10 words). No formatting. Just the whisper."
