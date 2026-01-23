@@ -242,6 +242,7 @@ python duet.py --help
 | `--visual` | Enable live comic-style visualization | `false` |
 | `--visual-image` | Base image with speech balloons | `Artboard 1.png` |
 | `--visual-pause` | Seconds to pause after each message | `3.0` |
+| `--visual-both` | Show both speech balloons simultaneously | `false` (shows one at a time) |
 
 ### Ambient Listening & Icebreakers
 
@@ -327,9 +328,14 @@ python duet.py \
 
 ### Visual Mode
 
+Visual mode displays the conversation in comic-style speech balloons. By default, only one balloon shows at a time (alternating between agents), making it easier for observers to focus. Use `--visual-both` to show both balloons simultaneously.
+
 ```bash
-# Basic visual mode (uses Artboard 1.png)
+# Basic visual mode (one balloon at a time - default)
 python duet.py --provider anthropic --visual
+
+# Show both balloons simultaneously (original behavior)
+python duet.py --provider anthropic --visual --visual-both
 
 # Custom image and longer reading time
 python duet.py --provider anthropic --visual --visual-image myimage.png --visual-pause 5.0
