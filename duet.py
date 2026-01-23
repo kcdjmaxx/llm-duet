@@ -186,6 +186,11 @@ def parse_args():
         help="How many turns to keep reinforcing a topic before moving to the next (default: 5).",
     )
 
+    parser.add_argument(
+        "--icebreakers",
+        help="Path to icebreakers markdown file with structured topic list.",
+    )
+
     return parser.parse_args()
 
 
@@ -354,6 +359,51 @@ class ComicVisualizer:
         pygame.quit()
 
 
+def load_icebreakers(path):
+    """
+    Load icebreakers markdown file and extract:
+      - rounds_per_topic: How many rounds before adding next topic to queue
+      - topics: List of topic strings
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read().strip()
+
+    # Extract YAML frontmatter
+    rounds_per_topic = 4  # default
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1]
+            body = parts[2]
+
+            # Parse rounds_per_topic from frontmatter
+            for line in frontmatter.splitlines():
+                if line.strip().startswith("rounds_per_topic:"):
+                    try:
+                        rounds_per_topic = int(line.split(":", 1)[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+        else:
+            body = content
+    else:
+        body = content
+
+    # Extract topics from numbered or bulleted list
+    topics = []
+    for line in body.splitlines():
+        line = line.strip()
+        # Match numbered lists (1. 2. etc) or bulleted lists (- * etc)
+        if re.match(r'^(\d+\.|\-|\*)\s+', line):
+            topic = re.sub(r'^(\d+\.|\-|\*)\s+', '', line).strip()
+            if topic and not topic.startswith("#"):  # skip headers
+                topics.append(topic)
+
+    return {
+        "topics": topics,
+        "rounds_per_topic": rounds_per_topic,
+    }
+
+
 def load_persona(path):
     """
     Load persona markdown and extract:
@@ -513,9 +563,32 @@ def main():
             return
         visualizer = ComicVisualizer(image_path)
 
+    # Icebreakers setup
+    icebreaker_data = None
+    if args.icebreakers:
+        if not os.path.exists(args.icebreakers):
+            print(f"Error: Icebreakers file not found: {args.icebreakers}")
+            return
+        icebreaker_data = load_icebreakers(args.icebreakers)
+        if not icebreaker_data["topics"]:
+            print(f"Warning: No topics found in {args.icebreakers}")
+            icebreaker_data = None
+        else:
+            print(f"Loaded {len(icebreaker_data['topics'])} icebreaker topics (interval: {icebreaker_data['rounds_per_topic']} rounds)")
+
     # Ambient listening setup
     listener = None
     room_persona = None
+
+    # Load room persona if EITHER listening or icebreakers are enabled
+    # (room persona transforms topics into whispers for injection)
+    if args.listen or icebreaker_data:
+        room_persona_path = "personas/room.md"
+        if not os.path.exists(room_persona_path):
+            print(f"Error: Room persona not found: {room_persona_path}")
+            return
+        room_persona = load_persona(room_persona_path)
+
     if args.listen:
         if not HAS_LISTENER:
             print("Error: listener module not available.")
@@ -524,16 +597,11 @@ def main():
         if not check_listener_deps():
             return
 
-        # Load room persona
-        room_persona_path = "personas/room.md"
-        if not os.path.exists(room_persona_path):
-            print(f"Error: Room persona not found: {room_persona_path}")
-            return
-        room_persona = load_persona(room_persona_path)
-
         # Initialize listener
         print(f"Initializing ambient listener (Whisper model: {args.whisper_model})...")
         listener = AmbientListener(whisper_model=args.whisper_model)
+        if icebreaker_data:
+            print("Note: Icebreakers will feed into the same topic queue as ambient listening.")
 
     topic = input("Enter start topic (word or full prompt): ").strip()
     if not topic:
@@ -686,6 +754,10 @@ GOOD: "Forget that. What about forgeries?"
     topic_hold_turns = args.topic_hold_turns  # How many turns to hold each topic
     topic_queue = []  # Queue of topics waiting to be introduced
 
+    # Icebreaker state
+    icebreaker_index = 0  # Current position in icebreaker topic list
+    rounds_since_last_icebreaker = 0  # Counter for icebreaker interval
+
     try:
         # First move: A starts
         conversation_a.append(
@@ -711,8 +783,8 @@ GOOD: "Forget that. What about forgeries?"
             visualizer.process_events()
             time.sleep(args.visual_pause)
 
-        # Brevity reminder injected each turn (no brackets - model was echoing them)
-        brevity_nudge = "\n\n(Keep your reply short. One thought only.)"
+        # Brevity reminder injected each turn (square brackets get cleaned by clean_response)
+        brevity_nudge = "\n\n[Keep your reply short. One thought only.]"
 
         # Main loop
         while True:
@@ -818,12 +890,26 @@ GOOD: "Forget that. What about forgeries?"
                 )
                 append_log(log_path, user_persona["name"], u_reply)
 
+            # Icebreaker injection - feed the topic queue on schedule
+            if icebreaker_data:
+                rounds_since_last_icebreaker += 1
+                if rounds_since_last_icebreaker >= icebreaker_data["rounds_per_topic"]:
+                    next_topic = icebreaker_data["topics"][icebreaker_index]
+                    topic_queue.append(next_topic)
+                    queue_msg = f"Queued: '{next_topic}' ({len(topic_queue)} waiting for room whisper)"
+                    print(cwrap(f"[Icebreaker]:", Colors.CYAN, use_color), queue_msg + "\n")
+
+                    # Advance to next topic (wrap around to start)
+                    icebreaker_index = (icebreaker_index + 1) % len(icebreaker_data["topics"])
+                    rounds_since_last_icebreaker = 0
+
             # Ambient listening - queue new topics
             if listener:
                 new_topic = listener.get_topic()
                 if new_topic:
                     topic_queue.append(new_topic)
-                    print(cwrap(f"[Queued]:", Colors.YELLOW, use_color), f"'{new_topic}' ({len(topic_queue)} in queue)\n")
+                    queue_msg = f"Overheard: '{new_topic}' ({len(topic_queue)} waiting for room whisper)"
+                    print(cwrap(f"[Listening]:", Colors.YELLOW, use_color), queue_msg + "\n")
 
             # Decrement active topic counter
             if room_topic_turns_left > 0:

@@ -22,6 +22,7 @@ Duet LLM is a framework for running multi-agent conversations between LLMs. It s
 - **Flexible CLI** - Control personas, models, intervals, max turns, and more
 - **Visual mode** - Live comic-style display with pygame for art installations
 - **Ambient listening** - Microphone captures speech, influencing the conversation (art installation feature)
+- **Icebreakers** - Structured topic rotation from markdown file, keeps conversation moving through curated topics
 
 ---
 
@@ -242,14 +243,15 @@ python duet.py --help
 | `--visual-image` | Base image with speech balloons | `Artboard 1.png` |
 | `--visual-pause` | Seconds to pause after each message | `3.0` |
 
-### Ambient Listening Options
+### Ambient Listening & Icebreakers
 
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--listen` | Enable ambient listening (microphone input) | `false` |
-| `--listen-interval` | Room whispers every N turns | `3` |
+| `--listen-interval` | Room whispers every N turns when topics are queued | `3` |
 | `--whisper-model` | Whisper model size (tiny/base/small/medium/large) | `base` |
 | `--topic-hold-turns` | How many turns to keep reinforcing a topic | `5` |
+| `--icebreakers` | Path to icebreakers markdown file with topic list | None |
 
 ### Other Options
 
@@ -356,6 +358,73 @@ python duet.py --provider anthropic --listen --whisper-model small
 4. Topics persist for N turns, with reinforcement nudges
 5. After N turns, the next queued topic is introduced
 
+### Icebreakers (Structured Topic Rotation)
+
+Icebreakers cycle through a curated list of topics, keeping conversations moving through specific subjects. Perfect for art installations, demos, or structured debates.
+
+**Create an icebreakers file** (`iceBreakers.md`):
+```markdown
+---
+rounds_per_topic: 4
+---
+
+# Ice Breaker Topics
+
+1. What's the most overrated technology?
+2. Should AI have rights?
+3. Is consciousness computation?
+4. Can art be objective?
+5. What's the weirdest law of physics?
+```
+
+**Basic usage:**
+```bash
+# Use icebreakers to guide conversation
+python duet.py --provider anthropic --icebreakers iceBreakers.md
+```
+
+**Controlling topic change speed:**
+
+```bash
+# Slow, natural drift (topics change gradually)
+python duet.py --provider anthropic --icebreakers iceBreakers.md \
+  --listen-interval 5 \
+  --topic-hold-turns 8
+
+# Fast topic hopping (quick shifts)
+python duet.py --provider anthropic --icebreakers iceBreakers.md \
+  --listen-interval 2 \
+  --topic-hold-turns 3
+
+# Very gradual (good for long art installations)
+python duet.py --provider anthropic --icebreakers iceBreakers.md \
+  --listen-interval 6 \
+  --topic-hold-turns 10
+```
+
+**Combine with ambient listening:**
+```bash
+# Both icebreakers and microphone feed the same topic queue
+python duet.py --provider anthropic --visual \
+  --icebreakers iceBreakers.md \
+  --listen \
+  --agentA personas/jamie.md \
+  --agentB personas/riley.md \
+  --visual-pause 6.0
+```
+
+**How it works:**
+1. Every `rounds_per_topic` rounds (set in iceBreakers.md), next topic is added to queue
+2. Every `--listen-interval` turns, room checks queue and whispers the next topic
+3. Topic is reinforced for `--topic-hold-turns` turns before moving to the next
+4. When the list ends, it cycles back to the beginning
+5. Topics from ambient listening and icebreakers share the same queue
+
+**Timing parameters explained:**
+- `rounds_per_topic` (in iceBreakers.md): How often to add a new icebreaker to the queue
+- `--listen-interval`: How often the room checks the queue and whispers a topic
+- `--topic-hold-turns`: How many turns to keep reinforcing each topic before moving on
+
 ### Limit Conversation Length
 
 ```bash
@@ -380,6 +449,7 @@ duet_llm/
 ├── duet.py           # Main orchestrator
 ├── listener.py       # Ambient listening module (mic + Whisper)
 ├── personaGen.py     # Interactive persona builder
+├── iceBreakers.md    # Structured topic rotation list (optional)
 ├── Artboard 1.png    # Default visual mode image (comic speech balloons)
 ├── personas/         # Persona markdown files
 │   ├── agent_a.md    # Skeptical physicist (Dr. Lena Hart)
